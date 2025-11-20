@@ -1,4 +1,5 @@
-﻿using RabbitMQ.Client;
+﻿using RabbitExchangeCleaner.Utilities;
+using RabbitMQ.Client;
 using RabbitMQ.Client.Exceptions;
 using System.CommandLine;
 using System.Net.Http.Headers;
@@ -9,14 +10,6 @@ using System.Text.RegularExpressions;
 
 namespace RabbitExchangeCleaner
 {
-    internal class InfoToken
-    {
-        public string? Name { get; set; }
-        public string? VHost { get; set; }
-
-        public override string ToString() => $"VHost: {VHost} - Name: {Name}";
-    }
-
     class Program
     {
         static async Task<int> Main(string[] args)
@@ -228,18 +221,6 @@ namespace RabbitExchangeCleaner
             {
                 ConsoleExt.WriteLine(ConsoleColor.Red, $"Errore generale: {ex.Message}");
             }
-        }
-    }
-
-
-    public static class ConsoleExt
-    {
-        public static void WriteLine(ConsoleColor foregroundColor, string? value)
-        {
-            var previousColor = Console.ForegroundColor;
-            Console.ForegroundColor = foregroundColor;
-            Console.WriteLine(value);
-            Console.ForegroundColor = previousColor;
         }
     }
 }
