@@ -3,7 +3,7 @@
     "RabbitExchangeCleaner": {
       "commandName": "Project",
       //"commandLineArgs": "-n a?q",
-      "commandLineArgs": ""
+      "commandLineArgs": "-n Lottomatica* historical* -vh phx-dev"
     }
   }
 }

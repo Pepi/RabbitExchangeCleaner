@@ -2,7 +2,9 @@
 using RabbitMQ.Client;
 using RabbitMQ.Client.Exceptions;
 using System.CommandLine;
+using System.Globalization;
 using System.Net.Http.Headers;
+using System.Runtime.InteropServices.Marshalling;
 using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -39,6 +41,12 @@ namespace RabbitExchangeCleaner
                 DefaultValueFactory = parseResult => "guest"
             };
 
+            var vHostOption = new Option<string>("--vhost", "-vh")
+            {
+                Description = "Virtual Host [default: tutti] ",
+                DefaultValueFactory = parseResult => string.Empty
+            };
+
             var prefixesOption = new Option<string[]>("--names", "-n")
             {
                 Description = "Lista dei prefissi degli exchange da cancellare",
@@ -47,12 +55,13 @@ namespace RabbitExchangeCleaner
             };
 
             var rootCommand =
-                new RootCommand("Utility per cancellare Exchange RabbitMQ basati su prefissi (HttpClient Version).")
+                new RootCommand("Utility per cancellare Exchange RabbitMQ basati su prefissi.")
                 {
                     hostOption,
                     portOption,
                     userOption,
                     passOption,
+                    vHostOption,
                     prefixesOption
                 };
 
@@ -63,9 +72,9 @@ namespace RabbitExchangeCleaner
                 var user = result.GetValue(userOption);
                 var pass = result.GetValue(passOption);
                 var prefixes = result.GetValue(prefixesOption)!;
+                var vhost = result.GetValue(vHostOption)!;
 
-
-                await CleanExchangesAsync(host, port, user, pass, prefixes);
+                await CleanExchangesAsync(host, port, user, pass, vhost, prefixes);
             });
 
             var parseResult = rootCommand.Parse(args);
@@ -87,9 +96,15 @@ namespace RabbitExchangeCleaner
         }
 
         private static async Task CleanExchangesAsync(string? host, int port, string? username, string? password,
+            string? vHost,
             string[]? prefixes)
         {
+
+            var vHostSpecified = !string.IsNullOrEmpty(vHost);
+
+
             ConsoleExt.WriteLine(ConsoleColor.Cyan, $"Avvio pulizia su {host}...\n\r" +
+                                                    (vHostSpecified ? $"VHost: {vHost}\n\r" : "") +
                                                     $"Prefissi target: {string.Join(", ", prefixes!)}");
 
 
@@ -152,7 +167,14 @@ namespace RabbitExchangeCleaner
                     })
                     .ToList();
 
-                var exchangesToDelete = allExchanges
+                var temporary = allExchanges
+                    .Where(t => !string.IsNullOrEmpty(t.Name) &&
+                                wildcardRegexes.Any(r => r.IsMatch(t.Name)));
+
+                if (vHostSpecified)
+                    temporary = temporary.Where(t => t.VHost == vHost);
+
+                var exchangesToDelete = temporary
                     .Where(t => !string.IsNullOrEmpty(t.Name) &&
                                 wildcardRegexes.Any(r => r.IsMatch(t.Name)))
                     .ToList();
