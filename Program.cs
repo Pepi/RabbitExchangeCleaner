@@ -4,7 +4,6 @@ using RabbitMQ.Client.Exceptions;
 using System.CommandLine;
 using System.Globalization;
 using System.Net.Http.Headers;
-using System.Runtime.InteropServices.Marshalling;
 using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -17,6 +16,11 @@ namespace RabbitExchangeCleaner
         static async Task<int> Main(string[] args)
         {
             Console.WriteLine("Hello, World!");
+
+            CultureInfo.CurrentUICulture = new CultureInfo("it-IT");
+
+
+            #region Parmeters definition
 
             var hostOption = new Option<string>("--host", "-h")
             {
@@ -53,6 +57,8 @@ namespace RabbitExchangeCleaner
                 Required = true,
                 AllowMultipleArgumentsPerToken = true
             };
+
+            #endregion
 
             var rootCommand =
                 new RootCommand("Utility per cancellare Exchange RabbitMQ basati su prefissi.")
@@ -246,6 +252,8 @@ namespace RabbitExchangeCleaner
         }
     }
 }
+
+
 
 
 /*
