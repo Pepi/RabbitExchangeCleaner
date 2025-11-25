@@ -2,6 +2,8 @@
 using RabbitMQ.Client;
 using RabbitMQ.Client.Exceptions;
 using System.CommandLine;
+using System.CommandLine.Help;
+using System.CommandLine.Invocation;
 using System.Globalization;
 using System.Net.Http.Headers;
 using System.Text;
@@ -15,7 +17,7 @@ namespace RabbitExchangeCleaner
     {
         static async Task<int> Main(string[] args)
         {
-            Console.WriteLine("Hello, World!");
+            Console.WriteLine("Hello, World!\n\r");
 
             CultureInfo.CurrentUICulture = new CultureInfo("it-IT");
 
@@ -71,6 +73,10 @@ namespace RabbitExchangeCleaner
                     prefixesOption
                 };
 
+            var option = rootCommand.Options.FirstOrDefault(o => o is HelpOption);
+            if (option != null )
+                option.Description = "Mostra informazioni di aiuto e utilizzo";
+
             rootCommand.SetAction(async (result, token) =>
             {
                 var host = result.GetValue(hostOption);
@@ -85,8 +91,81 @@ namespace RabbitExchangeCleaner
 
             var parseResult = rootCommand.Parse(args);
 
-            if (parseResult.Tokens.Any())
+            if (!parseResult.Tokens.Any())
             {
+                // richiesta manuale dei parametri
+                ConsoleExt.WriteLine(ConsoleColor.Yellow, "Nessun parametro rilevato. Avvio modalità interattiva...\n\r");
+
+                var tmpArg = new List<string>();
+
+                Console.Write("Host RabbitMQ [localhost]: ");
+                var host = Console.ReadLine();
+                if (string.IsNullOrEmpty(host))
+                    host = "localhost";
+
+                tmpArg.Add("--host");
+                tmpArg.Add(host);
+
+
+                Console.Write("Porta RabbitMQ [15672]: ");
+                var portInput = Console.ReadLine();
+                int port = 15672;
+                if (!string.IsNullOrEmpty(portInput) && int.TryParse(portInput, out var parsedPort))
+                    port = parsedPort;
+
+                tmpArg.Add("--port");
+                tmpArg.Add(port.ToString());
+
+
+                Console.Write("Username [guest]: ");
+                var user = Console.ReadLine();
+                if (string.IsNullOrEmpty(user))
+                    user = "guest";
+
+                tmpArg.Add("--user");
+                tmpArg.Add(user);
+
+                Console.Write("Password [guest]: ");
+                var pass = Console.ReadLine();
+                if (string.IsNullOrEmpty(pass))
+                    pass = "guest";
+
+                tmpArg.Add("--password");
+                tmpArg.Add(pass);
+
+
+                Console.Write("Virtual Host (lascia vuoto per tutti): ");
+                var vhost = Console.ReadLine();
+
+                if (!string.IsNullOrEmpty(vhost))
+                {
+                    tmpArg.Add("--vhost");
+                    tmpArg.AddRange(vhost);
+                }
+
+
+                Console.Write("Prefissi exchange da cancellare (separati da spazio o virgola): ");
+                var prefixesInput = Console.ReadLine();
+                string[] prefixes = Array.Empty<string>();
+                if (!string.IsNullOrEmpty(prefixesInput))
+                {
+                    prefixes = prefixesInput
+                        .Split([' ', ','], StringSplitOptions.RemoveEmptyEntries)
+                        .Select(p => p.Trim())
+                        .ToArray();
+                }
+                if (prefixes.Length == 0)
+                {
+                    ConsoleExt.WriteLine(ConsoleColor.Red, "Nessun prefisso specificato. Operazione annullata.");
+                    return 2;
+                }
+
+                tmpArg.Add("--names");
+                tmpArg.AddRange(prefixes);
+
+                //await CleanExchangesAsync(host, port, user, pass, vhost, prefixes);
+                //return 0;
+                parseResult = rootCommand.Parse(tmpArg.ToArray());
             }
 
             if (parseResult.Errors.Count <= 0)
@@ -97,7 +176,7 @@ namespace RabbitExchangeCleaner
             {
                 ConsoleExt.WriteLine(ConsoleColor.Red, error.Message);
             }
-            return 1; // Codice di errore
+            return 1;
 
         }
 
@@ -131,7 +210,7 @@ namespace RabbitExchangeCleaner
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    ConsoleExt.WriteLine(ConsoleColor.Red, $"Errore API Management: {response.StatusCode} - {response.ReasonPhrase}");
+                    ConsoleExt.WriteLine(ConsoleColor.Red, $"\n\rErrore API Management: {response.StatusCode} - {response.ReasonPhrase}");
                     return;
                 }
 
@@ -143,7 +222,7 @@ namespace RabbitExchangeCleaner
 
                 if (rootNode is not JsonArray exchangesArray)
                 {
-                    ConsoleExt.WriteLine(ConsoleColor.Red, "Formato risposta imprevisto (non è un array).");
+                    ConsoleExt.WriteLine(ConsoleColor.Red, "\n\rFormato risposta imprevisto (non è un array).");
 
                     return;
                 }
@@ -192,7 +271,7 @@ namespace RabbitExchangeCleaner
 
                 if (exchangesToDelete.Count == 0)
                 {
-                    ConsoleExt.WriteLine(ConsoleColor.Red, "Nessun exchange trovato con i prefissi specificati.");
+                    ConsoleExt.WriteLine(ConsoleColor.Red, "\n\rNessun exchange trovato con i prefissi specificati.");
                     return;
                 }
 
@@ -207,7 +286,7 @@ namespace RabbitExchangeCleaner
 
                     try
                     {
-                        Console.WriteLine($"Connessione al VHost: '{currentVHost}'...");
+                        ConsoleExt.WriteLine(ConsoleColor.Blue, $"Connessione al VHost: '{currentVHost}'...");
 
                         var factory = new ConnectionFactory
                         {
@@ -243,271 +322,12 @@ namespace RabbitExchangeCleaner
             }
             catch (HttpRequestException httpEx)
             {
-                ConsoleExt.WriteLine(ConsoleColor.Red, $"Errore HTTP: {httpEx.Message}");
+                ConsoleExt.WriteLine(ConsoleColor.Red, $"\n\rErrore HTTP: {httpEx.Message}");
             }
             catch (Exception ex)
             {
-                ConsoleExt.WriteLine(ConsoleColor.Red, $"Errore generale: {ex.Message}");
+                ConsoleExt.WriteLine(ConsoleColor.Red, $"\n\rErrore generale: {ex.Message}");
             }
         }
     }
 }
-
-
-
-
-/*
-
-
-using System.Net.Http.Headers;
-using System.Text;
-using System.Text.Json;
-using System.Text.Json.Nodes;
-using RabbitMQ.Client;
-using RabbitMQ.Client.Exceptions;
-
-namespace RabbitMqCleaner;
-
-internal class InfoToken
-{
-    public string? Name { get; set; }
-    public string? VHost { get; set; }
-    public override string ToString() => $"VHost: {VHost} - Name: {Name}";
-}
-
-internal class AppArguments
-{
-    public string Host { get; set; } = "localhost";
-    public string User { get; set; } = "guest";
-    public string Pass { get; set; } = "guest";
-    public List<string> Prefixes { get; set; } = new();
-
-    // Consideriamo validi gli argomenti solo se c'è almeno un prefisso
-    public bool IsValid => Prefixes.Any();
-}
-
-class Program
-{
-    static async Task Main(string[] args)
-    {
-        // 1. Parsing iniziale da riga di comando
-        var arguments = ParseArguments(args);
-
-        // 2. Se mancano i dati essenziali (prefissi), chiediamo all'utente
-        if (!arguments.IsValid)
-        {
-            CompletaParametriInterattivamente(arguments);
-        }
-
-        // 3. Se dopo l'input utente mancano ancora i prefissi, usciamo
-        if (!arguments.IsValid)
-        {
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine("Nessun prefisso specificato. Operazione annullata.");
-            Console.ResetColor();
-            return;
-        }
-
-        // 4. Avvio logica
-        await CleanExchangesAsync(arguments);
-        
-        // Mantiene la console aperta se eseguito a mano
-        Console.WriteLine("\nPremere un tasto per chiudere...");
-        Console.ReadKey();
-    }
-
-    static void CompletaParametriInterattivamente(AppArguments args)
-    {
-        Console.WriteLine("--- Parametri mancanti o avvio manuale ---");
-        Console.WriteLine("Premi INVIO per accettare il valore di [default]");
-        Console.WriteLine();
-
-        // Host
-        args.Host = LeggiInput("Host RabbitMQ", args.Host);
-
-        // User
-        args.User = LeggiInput("Username", args.User);
-
-        // Pass
-        args.Pass = LeggiInput("Password", args.Pass); // Nota: qui il testo sarà visibile
-
-        // Prefissi
-        Console.Write("Prefissi (separati da spazio o virgola): ");
-        string? inputPrefixes = Console.ReadLine();
-
-        if (!string.IsNullOrWhiteSpace(inputPrefixes))
-        {
-            // Divide per virgola o spazio e rimuove voci vuote
-            var inputParts = inputPrefixes.Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries);
-            args.Prefixes.AddRange(inputParts);
-        }
-        Console.WriteLine("------------------------------------------\n");
-    }
-
-    static string LeggiInput(string etichetta, string valoreDefault)
-    {
-        Console.Write($"{etichetta} [{valoreDefault}]: ");
-        string? input = Console.ReadLine();
-        return string.IsNullOrWhiteSpace(input) ? valoreDefault : input;
-    }
-
-    static AppArguments ParseArguments(string[] args)
-    {
-        var result = new AppArguments();
-
-        for (int i = 0; i < args.Length; i++)
-        {
-            switch (args[i].ToLower())
-            {
-                case "--host":
-                    if (i + 1 < args.Length) result.Host = args[++i];
-                    break;
-                case "--user":
-                    if (i + 1 < args.Length) result.User = args[++i];
-                    break;
-                case "--pass":
-                    if (i + 1 < args.Length) result.Pass = args[++i];
-                    break;
-                case "--prefixes":
-                    while (i + 1 < args.Length && !args[i + 1].StartsWith("-"))
-                    {
-                        result.Prefixes.Add(args[++i]);
-                    }
-                    break;
-            }
-        }
-        return result;
-    }
-
-    static async Task CleanExchangesAsync(AppArguments args)
-    {
-        Console.ForegroundColor = ConsoleColor.Cyan;
-        Console.WriteLine($"Avvio pulizia su {args.Host}...");
-        Console.WriteLine($"Prefissi target: {string.Join(", ", args.Prefixes)}");
-        Console.ResetColor();
-
-        using var httpClient = new HttpClient();
-        // Timeout breve per evitare attese lunghe se l'host è sbagliato
-        httpClient.Timeout = TimeSpan.FromSeconds(10); 
-
-        try
-        {
-            httpClient.BaseAddress = new Uri($"http://{args.Host}:15672/api/");
-        }
-        catch (UriFormatException)
-        {
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine($"Formato Host non valido: {args.Host}");
-            return;
-        }
-        
-        var authString = Convert.ToBase64String(Encoding.ASCII.GetBytes($"{args.User}:{args.Pass}"));
-        httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", authString);
-
-        try
-        {
-            Console.WriteLine("Recupero lista exchange...");
-            var response = await httpClient.GetAsync("exchanges");
-
-            if (!response.IsSuccessStatusCode)
-            {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine($"Errore API ({response.StatusCode}): Verifica credenziali o vhost permissions.");
-                return;
-            }
-
-            var contentStream = await response.Content.ReadAsStreamAsync();
-            var rootNode = await JsonNode.ParseAsync(contentStream);
-            
-            if (rootNode is not JsonArray exchangesArray)
-            {
-                Console.WriteLine("Risposta non valida dal server.");
-                return;
-            }
-
-            var allExchanges = exchangesArray.Select(node => new InfoToken
-            {
-                Name = node?["name"]?.ToString(),
-                VHost = node?["vhost"]?.ToString()
-            });
-
-            var exchangesToDelete = allExchanges
-                .Where(t => !string.IsNullOrEmpty(t.Name) && 
-                            args.Prefixes.Any(p => t.Name.StartsWith(p, StringComparison.OrdinalIgnoreCase)))
-                .ToList();
-
-            if (exchangesToDelete.Count == 0)
-            {
-                Console.WriteLine("Nessun exchange trovato con i prefissi specificati.");
-                return;
-            }
-
-            Console.WriteLine($"Trovati {exchangesToDelete.Count} exchange da cancellare.");
-
-            var groupedByVHost = exchangesToDelete.GroupBy(i => i.VHost);
-
-            foreach (var group in groupedByVHost)
-            {
-                string currentVHost = group.Key!;
-                
-                try
-                {
-                    Console.WriteLine($"Connessione al VHost: '{currentVHost}'...");
-
-                    var factory = new ConnectionFactory
-                    {
-                        HostName = args.Host,
-                        UserName = args.User,
-                        Password = args.Pass,
-                        VirtualHost = currentVHost
-                    };
-
-                    await using var connection = await factory.CreateConnectionAsync();
-                    await using var channel = await connection.CreateChannelAsync();
-
-                    foreach (var exchangeToken in group)
-                    {
-                        try 
-                        {
-                            await channel.ExchangeDeleteAsync(exchangeToken.Name!);
-                            Console.ForegroundColor = ConsoleColor.Green;
-                            Console.WriteLine($"[ELIMINATO] {exchangeToken}");
-                        }
-                        catch (Exception ex)
-                        {
-                            Console.ForegroundColor = ConsoleColor.Yellow;
-                            Console.WriteLine($"[ERRORE DELETE] {exchangeToken.Name}: {ex.Message}");
-                        }
-                        finally
-                        {
-                            Console.ResetColor();
-                        }
-                    }
-                }
-                catch (BrokerUnreachableException)
-                {
-                    Console.ForegroundColor = ConsoleColor.Red;
-                    Console.WriteLine($"Impossibile connettersi alla porta 5672 (AMQP) su {args.Host}.");
-                    Console.ResetColor();
-                }
-            }
-        }
-        catch (HttpRequestException)
-        {
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine($"Impossibile contattare le API HTTP su {args.Host}:15672.");
-            Console.ResetColor();
-        }
-        catch (Exception ex)
-        {
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine($"Errore inatteso: {ex.Message}");
-            Console.ResetColor();
-        }
-    }
-}
-
-
-
-
-*/
