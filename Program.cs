@@ -60,6 +60,17 @@ namespace RabbitExchangeCleaner
                 AllowMultipleArgumentsPerToken = true
             };
 
+            var confirmOption = new Option<bool>("--confirm", "-c")
+            {
+                Description = "Conferma ogni cancellazione",
+                DefaultValueFactory = parseResult => false
+            };
+            var previewOption = new Option<bool>("--preview")
+            {
+                Description = "Elenca gli exchange che verranno cancellati",
+                DefaultValueFactory = parseResult => false
+            };
+
             #endregion
 
             var rootCommand =
@@ -70,12 +81,19 @@ namespace RabbitExchangeCleaner
                     userOption,
                     passOption,
                     vHostOption,
-                    prefixesOption
+                    prefixesOption,
+                    confirmOption,
+                    previewOption
                 };
 
             var option = rootCommand.Options.FirstOrDefault(o => o is HelpOption);
-            if (option != null )
+            if (option != null)
                 option.Description = "Mostra informazioni di aiuto e utilizzo";
+
+            option = rootCommand.Options.FirstOrDefault(o => o is VersionOption);
+            if (option != null)
+                option.Description = "Mostra informazioni sulla versione";
+
 
             rootCommand.SetAction(async (result, token) =>
             {
@@ -85,8 +103,10 @@ namespace RabbitExchangeCleaner
                 var pass = result.GetValue(passOption);
                 var prefixes = result.GetValue(prefixesOption)!;
                 var vhost = result.GetValue(vHostOption)!;
+                var preview = result.GetValue<bool>(previewOption);
+                var confirm = result.GetValue<bool>(confirmOption);
 
-                await CleanExchangesAsync(host, port, user, pass, vhost, prefixes);
+                await CleanExchangesAsync(host, port, user, pass, vhost, prefixes, preview, confirm);
             });
 
             var parseResult = rootCommand.Parse(args);
@@ -109,7 +129,7 @@ namespace RabbitExchangeCleaner
 
                 Console.Write("Porta RabbitMQ [15672]: ");
                 var portInput = Console.ReadLine();
-                int port = 15672;
+                var port = 15672;
                 if (!string.IsNullOrEmpty(portInput) && int.TryParse(portInput, out var parsedPort))
                     port = parsedPort;
 
@@ -140,13 +160,13 @@ namespace RabbitExchangeCleaner
                 if (!string.IsNullOrEmpty(vhost))
                 {
                     tmpArg.Add("--vhost");
-                    tmpArg.AddRange(vhost);
+                    tmpArg.Add(vhost);
                 }
 
 
                 Console.Write("Prefissi exchange da cancellare (separati da spazio o virgola): ");
                 var prefixesInput = Console.ReadLine();
-                string[] prefixes = Array.Empty<string>();
+                var prefixes = Array.Empty<string>();
                 if (!string.IsNullOrEmpty(prefixesInput))
                 {
                     prefixes = prefixesInput
@@ -163,8 +183,18 @@ namespace RabbitExchangeCleaner
                 tmpArg.Add("--names");
                 tmpArg.AddRange(prefixes);
 
-                //await CleanExchangesAsync(host, port, user, pass, vhost, prefixes);
-                //return 0;
+                var how = GetYesNoInput("Elencare gli Exchange senza cancellarli?:");
+                tmpArg.Add("--preview");
+                tmpArg.Add(how.ToString());
+
+                if (!how)
+                {
+                    how = GetYesNoInput("Chiedere conferma prima di ogni cancellazione?:");
+
+                    tmpArg.Add("--confirm");
+                    tmpArg.Add(how.ToString());
+                }
+
                 parseResult = rootCommand.Parse(tmpArg.ToArray());
             }
 
@@ -182,13 +212,19 @@ namespace RabbitExchangeCleaner
 
         private static async Task CleanExchangesAsync(string? host, int port, string? username, string? password,
             string? vHost,
-            string[]? prefixes)
+            string[]? prefixes, bool preview, bool confirm)
         {
 
             var vHostSpecified = !string.IsNullOrEmpty(vHost);
 
+            var labelAzione = preview ? "Elenco exchange" : "Avvio pulizia";
+            var labelDisplay = preview ? "elencare" : "cancellare";
+            var labelDelete = preview ? "[SARA' ELIMINATO]" : "[ELIMINATO]";
 
-            ConsoleExt.WriteLine(ConsoleColor.Cyan, $"Avvio pulizia su {host}...\n\r" +
+            if (preview)
+                confirm = false;
+
+            ConsoleExt.WriteLine(ConsoleColor.Cyan, $"{labelAzione} su {host}...\n\r" +
                                                     (vHostSpecified ? $"VHost: {vHost}\n\r" : "") +
                                                     $"Prefissi target: {string.Join(", ", prefixes!)}");
 
@@ -207,6 +243,7 @@ namespace RabbitExchangeCleaner
             {
                 // Esecuzione richiesta GET
                 var response = await httpClient.GetAsync("exchanges");
+                //var response = await httpClient.GetAsync("queues");   // il browsing funziona lo stesso per le code senza cambiare oggetto di mapping
 
                 if (!response.IsSuccessStatusCode)
                 {
@@ -264,10 +301,6 @@ namespace RabbitExchangeCleaner
                                 wildcardRegexes.Any(r => r.IsMatch(t.Name)))
                     .ToList();
 
-                //var exchangesToDelete = allExchanges
-                //    .Where(t => !string.IsNullOrEmpty(t.Name) &&
-                //                prefixes!.Any(p => t.Name.StartsWith(p, StringComparison.OrdinalIgnoreCase)))
-                //    .ToList();
 
                 if (exchangesToDelete.Count == 0)
                 {
@@ -275,7 +308,7 @@ namespace RabbitExchangeCleaner
                     return;
                 }
 
-                Console.WriteLine($"Trovati {exchangesToDelete.Count} exchange da cancellare.");
+                Console.WriteLine($"Trovati {exchangesToDelete.Count} exchange da {labelDisplay}.");
 
                 // 4. Cancellazione effettiva (RabbitMQ.Client)
                 var groupedByVHost = exchangesToDelete.GroupBy(i => i.VHost);
@@ -303,8 +336,23 @@ namespace RabbitExchangeCleaner
                         {
                             try
                             {
-                                await channel.ExchangeDeleteAsync(exchangeToken.Name!);
-                                ConsoleExt.WriteLine(ConsoleColor.Green, $"[ELIMINATO] {exchangeToken}");
+                                if (confirm)
+                                {
+                                    var userConfirmed = GetYesNoInput($"Confermi la cancellazione dell'exchange '{exchangeToken.Name}' sul VHost '{currentVHost}'?");
+                                    if (!userConfirmed)
+                                    {
+                                        ConsoleExt.WriteLine(ConsoleColor.Yellow, $"[SKIPPED] {exchangeToken}");
+                                        continue;
+                                    }
+                                }
+
+                                if (!preview)
+                                {
+                                    await channel.ExchangeDeleteAsync(exchangeToken.Name!);
+                                }
+
+
+                                ConsoleExt.WriteLine(ConsoleColor.Green, $"{labelDelete} {exchangeToken}");
 
                             }
                             catch (Exception ex)
@@ -328,6 +376,43 @@ namespace RabbitExchangeCleaner
             {
                 ConsoleExt.WriteLine(ConsoleColor.Red, $"\n\rErrore generale: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Richiede all'utente una risposta 'S' (Sì) o 'N' (No) e restituisce il booleano corrispondente.
+        /// Ripete la richiesta finché l'input non è valido.
+        /// </summary>
+        /// <param name="promptMessage">Il messaggio da visualizzare all'utente per la richiesta.</param>
+        /// <returns>True se l'utente risponde 'S', False se l'utente risponde 'N'.</returns>
+        public static bool GetYesNoInput(string promptMessage)
+        {
+            bool? result = null;
+
+            do
+            {
+                // Visualizza il messaggio di richiesta e l'indicazione (S/N)
+                Console.Write($"{promptMessage} (S/N): ");
+
+                // Legge la riga di input e la converte in maiuscolo per un confronto non sensibile alle maiuscole
+                var input = Console.ReadLine()?.ToUpperInvariant();
+
+                if (input == "S")
+                {
+                    result = true;
+                }
+                else if (input == "N")
+                {
+                    result = false;
+                }
+                else
+                {
+                    // Opzionale: notifica all'utente che l'input non è valido
+                    Console.WriteLine("Input non valido. Si prega di rispondere 'S' per Sì o 'N' per No.");
+                }
+
+            } while (!result.HasValue); // Continua finché 'result' non ha un valore (cioè, finché l'input è valido)
+
+            return result.Value;
         }
     }
 }
