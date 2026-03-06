@@ -2,7 +2,7 @@
   "profiles": {
     "RabbitExchangeCleaner": {
       "commandName": "Project",
-      "commandLineArgs": "--help"
+      //"commandLineArgs": "--help"
       //"commandLineArgs": "-n a?q",
       //"commandLineArgs": "-n Lottomatica* historical* -vh phx-dev"
       //"commandLineArgs": ""

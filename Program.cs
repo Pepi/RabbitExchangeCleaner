@@ -53,9 +53,15 @@ namespace RabbitExchangeCleaner
                 DefaultValueFactory = parseResult => string.Empty
             };
 
+            var exchangeOption = new Option<bool>("--exchange", "-e")
+            {
+                Description = "Parliamo di exchanges?",
+                DefaultValueFactory = parseResult => true
+            };
+
             var prefixesOption = new Option<string[]>("--names", "-n")
             {
-                Description = "Lista dei prefissi degli exchange da cancellare",
+                Description = "Lista dei prefissi degli elementi da cancellare",
                 Required = true,
                 AllowMultipleArgumentsPerToken = true
             };
@@ -67,14 +73,14 @@ namespace RabbitExchangeCleaner
             };
             var previewOption = new Option<bool>("--preview")
             {
-                Description = "Elenca gli exchange che verranno cancellati",
+                Description = "Elenca gli elementi che verranno cancellati",
                 DefaultValueFactory = parseResult => false
             };
 
             #endregion
 
             var rootCommand =
-                new RootCommand("Utility per cancellare Exchange RabbitMQ basati su prefissi.")
+                new RootCommand("Utility per cancellare Exchange o Queue RabbitMQ basati su prefissi.")
                 {
                     hostOption,
                     portOption,
@@ -83,7 +89,8 @@ namespace RabbitExchangeCleaner
                     vHostOption,
                     prefixesOption,
                     confirmOption,
-                    previewOption
+                    previewOption,
+                    exchangeOption
                 };
 
             var option = rootCommand.Options.FirstOrDefault(o => o is HelpOption);
@@ -105,8 +112,9 @@ namespace RabbitExchangeCleaner
                 var vhost = result.GetValue(vHostOption)!;
                 var preview = result.GetValue<bool>(previewOption);
                 var confirm = result.GetValue<bool>(confirmOption);
+                var exchange = result.GetValue<bool>(exchangeOption);
 
-                await CleanExchangesAsync(host, port, user, pass, vhost, prefixes, preview, confirm);
+                await CleanExchangesAsync(host, port, user, pass, vhost, prefixes, preview, confirm, exchange);
             });
 
             var parseResult = rootCommand.Parse(args);
@@ -163,8 +171,11 @@ namespace RabbitExchangeCleaner
                     tmpArg.Add(vhost);
                 }
 
+                var exchange = GetYesNoInput("Parliamo di Exchange?: ");
+                tmpArg.Add("--exchange");
+                tmpArg.Add(exchange.ToString());
 
-                Console.Write("Prefissi exchange da cancellare (separati da spazio o virgola): ");
+                Console.Write("Prefissi degli elementi da cancellare (separati da spazio o virgola): ");
                 var prefixesInput = Console.ReadLine();
                 var prefixes = Array.Empty<string>();
                 if (!string.IsNullOrEmpty(prefixesInput))
@@ -183,7 +194,7 @@ namespace RabbitExchangeCleaner
                 tmpArg.Add("--names");
                 tmpArg.AddRange(prefixes);
 
-                var how = GetYesNoInput("Elencare gli Exchange senza cancellarli?:");
+                var how = GetYesNoInput("Elencare gli elementi senza cancellarli?:");
                 tmpArg.Add("--preview");
                 tmpArg.Add(how.ToString());
 
@@ -212,12 +223,12 @@ namespace RabbitExchangeCleaner
 
         private static async Task CleanExchangesAsync(string? host, int port, string? username, string? password,
             string? vHost,
-            string[]? prefixes, bool preview, bool confirm)
+            string[]? prefixes, bool preview, bool confirm, bool exchange)
         {
 
             var vHostSpecified = !string.IsNullOrEmpty(vHost);
 
-            var labelAzione = preview ? "Elenco exchange" : "Avvio pulizia";
+            var labelAzione = preview ? "Elenco elementi" : "Avvio pulizia";
             var labelDisplay = preview ? "elencare" : "cancellare";
             var labelDelete = preview ? "[SARA' ELIMINATO]" : "[ELIMINATO]";
 
@@ -242,7 +253,7 @@ namespace RabbitExchangeCleaner
             try
             {
                 // Esecuzione richiesta GET
-                var response = await httpClient.GetAsync("exchanges");
+                var response = await httpClient.GetAsync(exchange ? "exchanges": "queues");
                 //var response = await httpClient.GetAsync("queues");   // il browsing funziona lo stesso per le code senza cambiare oggetto di mapping
 
                 if (!response.IsSuccessStatusCode)
@@ -304,11 +315,11 @@ namespace RabbitExchangeCleaner
 
                 if (exchangesToDelete.Count == 0)
                 {
-                    ConsoleExt.WriteLine(ConsoleColor.Red, "\n\rNessun exchange trovato con i prefissi specificati.");
+                    ConsoleExt.WriteLine(ConsoleColor.Red, $"\n\rNessun {(exchange ? "exchange" : "queue")} trovato con i prefissi specificati.");
                     return;
                 }
 
-                Console.WriteLine($"Trovati {exchangesToDelete.Count} exchange da {labelDisplay}.");
+                Console.WriteLine($"Trovati {exchangesToDelete.Count} {(exchange ? "exchange" : "queue")} da {labelDisplay}.");
 
                 // 4. Cancellazione effettiva (RabbitMQ.Client)
                 var groupedByVHost = exchangesToDelete.GroupBy(i => i.VHost);
@@ -338,7 +349,7 @@ namespace RabbitExchangeCleaner
                             {
                                 if (confirm)
                                 {
-                                    var userConfirmed = GetYesNoInput($"Confermi la cancellazione dell'exchange '{exchangeToken.Name}' sul VHost '{currentVHost}'?");
+                                    var userConfirmed = GetYesNoInput($"Confermi la cancellazione dell'elemento '{exchangeToken.Name}' sul VHost '{currentVHost}'?");
                                     if (!userConfirmed)
                                     {
                                         ConsoleExt.WriteLine(ConsoleColor.Yellow, $"[SKIPPED] {exchangeToken}");
@@ -348,7 +359,10 @@ namespace RabbitExchangeCleaner
 
                                 if (!preview)
                                 {
-                                    await channel.ExchangeDeleteAsync(exchangeToken.Name!);
+                                    if (exchange)
+                                        await channel.ExchangeDeleteAsync(exchangeToken.Name!);
+                                    else
+                                        await channel.QueueDeleteAsync(exchangeToken.Name!);
                                 }
 
 
@@ -406,8 +420,8 @@ namespace RabbitExchangeCleaner
                 }
                 else
                 {
-                    // Opzionale: notifica all'utente che l'input non è valido
-                    Console.WriteLine("Input non valido. Si prega di rispondere 'S' per Sì o 'N' per No.");
+                    // Opzionale: notifica all'utente che l' input non è valido
+                    Console.WriteLine("Input non valido. Si prega di rispondere 'S/s' per Sì o 'N/n' per No.");
                 }
 
             } while (!result.HasValue); // Continua finché 'result' non ha un valore (cioè, finché l'input è valido)
